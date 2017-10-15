@@ -17,6 +17,7 @@ const baseURL = "https://api.deutschebahn.com/timetables/v1"
 const dateFormat = "060102"
 const hourFormat = "15"
 const depFormat = "0601021504"
+const outpFormat = "15:04"
 
 var idReg = regexp.MustCompile(`-?\d+-\d`)
 
@@ -75,7 +76,7 @@ func main() {
 	}
 	fmt.Printf("#, Station, arrival, departure\n")
 	for index, stop := range stops {
-		fmt.Printf("%d, %s, %s, %s\n", index, stop.station.Name, stop.arrivalTime, stop.departureTime)
+		fmt.Printf("%d, %s, %s, %s\n", index, stop.station.Name, stop.arrivalTime.Format(outpFormat), stop.departureTime.Format(outpFormat))
 	}
 }
 
