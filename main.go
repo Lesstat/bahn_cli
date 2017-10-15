@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,10 +14,11 @@ import (
 )
 
 const baseURL = "https://api.deutschebahn.com/timetables/v1"
-
 const dateFormat = "060102"
 const hourFormat = "15"
 const depFormat = "0601021504"
+
+var idReg = regexp.MustCompile(`-?\d+-\d`)
 
 type stations struct {
 	XMLName xml.Name  `xml:"stations"`
@@ -132,7 +134,7 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 		if depTime.Before(date) {
 			continue
 		} else {
-			id = trip.ID
+			id = idReg.FindAllString(trip.ID, 1)[0]
 			fromStop.departureTime = depTime
 		}
 	}
@@ -154,7 +156,7 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 		for _, trip := range filteredToTrips {
 			fmt.Printf("testid: %s\n", trip.ID)
 
-			if trip.ID == id {
+			if idReg.FindAllString(trip.ID, 1)[0] == id {
 
 				arrTime, err := time.Parse(depFormat, trip.Arrival.Time)
 				if err != nil {
