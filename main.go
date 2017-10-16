@@ -4,10 +4,12 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	resty "gopkg.in/resty.v1"
@@ -49,30 +51,46 @@ type tl struct {
 type halfTrip struct {
 	Time string `xml:"pt,attr"`
 	Path string `xml:"ppth,attr"`
+	Line string `xml:"l,attr"`
 }
 
 type stop struct {
 	station       station
 	arrivalTime   time.Time
 	departureTime time.Time
+	line          string
 }
 
 func main() {
 	setUpAuthToken()
+	w := tabwriter.NewWriter(os.Stdout, 5, 3, 3, ' ', 0)
+	// ellhofen, _ :=  getStation("TELI")
+	uni, _ := getStation("Stuttgart Universi")
+	stut_tief, _ := getStation("TS  T")
+	stut_hbf, _ := getStation("Stuttgart Hbf")
+	hn_hbf, _ := getStation("Heilbronn Hbf")
 
-	from, _ := getStation("Heilbronn Hauptbahnhof")
-	to, _ := getStation("Weinsberg")
-
-	stops, err := fromTo(from, to, time.Now())
+	stops, err := fromTo(uni, stut_tief, time.Now())
 	if err != nil {
 		return
 	}
-	fmt.Printf("#, Station, arrival, departure\n")
-	for index, stop := range stops {
-		fmt.Printf("%d, %s, %s, %s\n", index, stop.station.Name, stop.arrivalTime.Format(outpFormat), stop.departureTime.Format(outpFormat))
-	}
-}
+	new_arr := stops[1].arrivalTime.Add(7 * time.Minute)
 
+	stops2, err := fromTo(stut_hbf, hn_hbf, new_arr)
+	if err != nil {
+		return
+	}
+	stops = append(stops, stops2...)
+
+	fmt.Fprintln(w, "# Station \t arrival \t departure \t line")
+	for index, stop := range stops {
+		if stop.departureTime.IsZero() {
+			stop.departureTime = stop.arrivalTime
+		}
+		fmt.Fprintf(w, "%d %s \t %s \t %s \t %s\n", index, stop.station.Name, stop.arrivalTime.Format(outpFormat), stop.departureTime.Format(outpFormat), stop.line)
+	}
+	w.Flush()
+}
 func getStation(stationName string) (station station, err error) {
 	var stat stations
 	resp, err := resty.R().Get(baseURL + "/station/" + stationName)
@@ -94,50 +112,45 @@ func getTimetable(station station, date time.Time) (ttable timetable, err error)
 	}
 	err = xml.Unmarshal(resp.Body(), &ttable)
 	if err != nil {
+		fmt.Printf("URL %s\n", baseURL+"/plan/"+callURL)
+		fmt.Printf("%s\n", resp)
 		return ttable, err
 	}
 	return ttable, nil
 }
 
 func fromTo(from station, to station, date time.Time) ([]stop, error) {
-	var filteredFromTrips []trip
-	var filteredToTrips []trip
-
-	fromTrips, err := getTimetable(from, date)
-	if err != nil {
-		fmt.Printf("Could not get timetable for %s \n", from.Name)
-		fmt.Printf("%s\n", err)
-		return nil, err
-	}
-	for _, trip := range fromTrips.Trips {
-		if strings.Contains(trip.Departure.Path, to.Name) {
-			filteredFromTrips = append(filteredFromTrips, trip)
-		}
-	}
-	sort.Sort(ByDepTime(filteredFromTrips))
-
+	curDate := date.Add(-1 * time.Hour)
 	fromStop := stop{station: from, arrivalTime: date}
 	var id string
-	for _, trip := range filteredFromTrips {
-		depTime, err := time.Parse(depFormat, trip.Departure.Time)
+
+	for fromStop.departureTime.IsZero() {
+		curDate = curDate.Add(1 * time.Hour)
+		filteredFromTrips, err := getAndFilterTrips(from, to.Name, true, curDate)
 		if err != nil {
 			return nil, err
 		}
-		if depTime.Before(date) {
-			continue
-		} else {
-			id = idReg.FindAllString(trip.ID, 1)[0]
-			fromStop.departureTime = depTime
+		for _, trip := range filteredFromTrips {
+			depTime, err := time.ParseInLocation(depFormat, trip.Departure.Time, time.Local)
+			if err != nil {
+				return nil, err
+			}
+			if depTime.Before(date) {
+				continue
+			} else {
+				id = idReg.FindAllString(trip.ID, 1)[0]
+				fromStop.departureTime = depTime
+				fromStop.line = trip.TL.C + trip.Departure.Line
+			}
 		}
 	}
 	toStop := stop{station: to}
-	curDate := date
 	counter := 0
 	for toStop.arrivalTime.IsZero() {
 		if counter > 3 {
 			break
 		}
-		filteredToTrips, err = getAndFilterToTrips(to, from, curDate)
+		filteredToTrips, err := getAndFilterTrips(to, from.Name, false, curDate)
 		if err != nil {
 			return nil, err
 		}
@@ -145,7 +158,7 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 		counter += 1
 		for _, trip := range filteredToTrips {
 			if idReg.FindAllString(trip.ID, 1)[0] == id {
-				arrTime, err := time.Parse(depFormat, trip.Arrival.Time)
+				arrTime, err := time.ParseInLocation(depFormat, trip.Arrival.Time, time.Local)
 				if err != nil {
 					return nil, err
 				}
@@ -168,22 +181,28 @@ func (a ByDepTime) Len() int           { return len(a) }
 func (a ByDepTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByDepTime) Less(i, j int) bool { return a[i].Departure.Time < a[j].Departure.Time }
 
-func getAndFilterToTrips(to station, from station, date time.Time) ([]trip, error) {
-	var filteredToTrips []trip
-	toTrips, err := getTimetable(to, date)
+func getAndFilterTrips(table station, filterBy string, departure bool, date time.Time) ([]trip, error) {
+	var filteredTrips []trip
+	trips, err := getTimetable(table, date)
 	if err != nil {
-		fmt.Printf("Could not get timetable for %s \n", to.Name)
+		fmt.Printf("Could not get timetable for %s \n", table.Name)
 		fmt.Printf("%s\n", err)
 		return nil, err
 	}
-	for _, trip := range toTrips.Trips {
-		if strings.Contains(trip.Arrival.Path, from.Name) {
-			filteredToTrips = append(filteredToTrips, trip)
+	for _, trip := range trips.Trips {
+		if departure {
+			if strings.Contains(trip.Departure.Path, filterBy) {
+				filteredTrips = append(filteredTrips, trip)
+			}
+		} else {
+			if strings.Contains(trip.Arrival.Path, filterBy) {
+				filteredTrips = append(filteredTrips, trip)
+			}
 		}
 	}
-	sort.Sort(ByArrTime(filteredToTrips))
+	sort.Sort(ByArrTime(filteredTrips))
 
-	return filteredToTrips, nil
+	return filteredTrips, nil
 }
 
 func setUpAuthToken() {

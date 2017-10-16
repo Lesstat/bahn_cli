@@ -14,3 +14,4 @@
 .glide/
 /bahn
 /auth_token
+/bahn_cli
