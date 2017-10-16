@@ -58,14 +58,7 @@ type stop struct {
 }
 
 func main() {
-
-	tokenBytes, err := ioutil.ReadFile("auth_token")
-	if err != nil {
-		fmt.Printf("could not read token file\n")
-		fmt.Printf("error: %s\n", err)
-		return
-	}
-	resty.SetAuthToken(string(tokenBytes))
+	setUpAuthToken()
 
 	from, _ := getStation("Heilbronn Hauptbahnhof")
 	to, _ := getStation("Weinsberg")
@@ -80,20 +73,20 @@ func main() {
 	}
 }
 
-func getStation(stationName string) (station, error) {
-	resp, err := resty.R().Get(baseURL + "/station/" + stationName)
+func getStation(stationName string) (station station, err error) {
 	var stat stations
-
+	resp, err := resty.R().Get(baseURL + "/station/" + stationName)
+	if err != nil {
+		return station, err
+	}
 	err = xml.Unmarshal(resp.Body(), &stat)
 	if err != nil {
-		var station station
 		return station, err
 	}
 	return stat.Station[0], nil
 }
 
-func getTimetable(station station, date time.Time) (timetable, error) {
-	var ttable timetable
+func getTimetable(station station, date time.Time) (ttable timetable, err error) {
 	callURL := strconv.Itoa(station.ID) + "/" + date.Format(dateFormat) + "/" + date.Format(hourFormat)
 	resp, err := resty.R().Get(baseURL + "/plan/" + callURL)
 	if err != nil {
@@ -101,8 +94,6 @@ func getTimetable(station station, date time.Time) (timetable, error) {
 	}
 	err = xml.Unmarshal(resp.Body(), &ttable)
 	if err != nil {
-		fmt.Printf("%s\n", baseURL+"/plan/"+callURL)
-		fmt.Printf("%s\n", resp)
 		return ttable, err
 	}
 	return ttable, nil
@@ -139,8 +130,6 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 			fromStop.departureTime = depTime
 		}
 	}
-	fmt.Printf("ID    : %s\n", id)
-
 	toStop := stop{station: to}
 	curDate := date
 	counter := 0
@@ -148,17 +137,14 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 		if counter > 3 {
 			break
 		}
-		filteredToTrips, err = getAndFilterToTrips(to, curDate)
+		filteredToTrips, err = getAndFilterToTrips(to, from, curDate)
 		if err != nil {
 			return nil, err
 		}
 		curDate = curDate.Add(1 * time.Hour)
 		counter += 1
 		for _, trip := range filteredToTrips {
-			fmt.Printf("testid: %s\n", trip.ID)
-
 			if idReg.FindAllString(trip.ID, 1)[0] == id {
-
 				arrTime, err := time.Parse(depFormat, trip.Arrival.Time)
 				if err != nil {
 					return nil, err
@@ -182,7 +168,7 @@ func (a ByDepTime) Len() int           { return len(a) }
 func (a ByDepTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByDepTime) Less(i, j int) bool { return a[i].Departure.Time < a[j].Departure.Time }
 
-func getAndFilterToTrips(to station, date time.Time) ([]trip, error) {
+func getAndFilterToTrips(to station, from station, date time.Time) ([]trip, error) {
 	var filteredToTrips []trip
 	toTrips, err := getTimetable(to, date)
 	if err != nil {
@@ -191,9 +177,21 @@ func getAndFilterToTrips(to station, date time.Time) ([]trip, error) {
 		return nil, err
 	}
 	for _, trip := range toTrips.Trips {
-		filteredToTrips = append(filteredToTrips, trip)
+		if strings.Contains(trip.Arrival.Path, from.Name) {
+			filteredToTrips = append(filteredToTrips, trip)
+		}
 	}
 	sort.Sort(ByArrTime(filteredToTrips))
 
 	return filteredToTrips, nil
+}
+
+func setUpAuthToken() {
+	tokenBytes, err := ioutil.ReadFile("auth_token")
+	if err != nil {
+		fmt.Printf("could not read token file\n")
+		fmt.Printf("error: %s\n", err)
+		return
+	}
+	resty.SetAuthToken(string(tokenBytes))
 }
