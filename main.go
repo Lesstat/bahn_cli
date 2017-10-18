@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"regexp"
 	"sort"
@@ -23,6 +24,10 @@ const depFormat = "0601021504"
 const outpFormat = "15:04"
 
 var idReg = regexp.MustCompile(`-?\d+-\d`)
+
+type bahnAPI struct {
+	err error
+}
 
 type stations struct {
 	XMLName xml.Name  `xml:"stations"`
@@ -63,25 +68,26 @@ type stop struct {
 }
 
 func main() {
-	setUpAuthToken()
+	var b bahnAPI
+	b.setUpAuthToken()
 	w := tabwriter.NewWriter(os.Stdout, 5, 3, 3, ' ', 0)
-	// ellhofen, _ :=  getStation("TELI")
-	uni, _ := getStation("Stuttgart Universi")
-	stutTief, _ := getStation("TS  T")
-	stutHbf, _ := getStation("Stuttgart Hbf")
-	hnHbf, _ := getStation("Heilbronn Hbf")
+	// // ellhofen, _ :=  getStation("TELI")
+	// uni := b.getStation("Stuttgart Universi")
+	// stutTief := b.getStation("TS  T")
+	// stutHbf := b.getStation("Stuttgart Hbf")
+	// hnHbf := b.getStation("Heilbronn Hbf")
 
-	stops, err := fromTo(uni, stutTief, time.Now())
-	if err != nil {
-		return
-	}
-	newArr := stops[1].arrivalTime.Add(7 * time.Minute)
+	// stops := b.fromTo(uni, stutTief, time.Now())
+	// newArr := stops[1].arrivalTime.Add(7 * time.Minute)
 
-	stops2, err := fromTo(stutHbf, hnHbf, newArr)
-	if err != nil {
-		return
+	// stops2 := b.fromTo(stutHbf, hnHbf, newArr)
+
+	// stops = append(stops, stops2...)
+	stops := b.searchRoute("uh.route")
+
+	if b.err != nil {
+		log.Fatal(b.err)
 	}
-	stops = append(stops, stops2...)
 
 	fmt.Fprintln(w, "# Station \t arrival \t departure \t line")
 	for index, stop := range stops {
@@ -92,53 +98,70 @@ func main() {
 	}
 	w.Flush()
 }
-func getStation(stationName string) (station station, err error) {
+func (b *bahnAPI) getStation(stationName string) station {
+	var station station
+	if b.err != nil {
+		return station
+	}
 	var stat stations
 	resp, err := resty.R().Get(baseURL + "/station/" + stationName)
 	if err != nil {
-		return station, err
+		b.err = err
+		return station
 	}
 	err = xml.Unmarshal(resp.Body(), &stat)
 	if err != nil {
-		return station, err
+		b.err = err
+		return station
 	}
 	if stat.Station[0].ID == 0 {
-		return station, errors.New("Did not find station for " + stationName)
+		b.err = errors.New("Did not find station for " + stationName)
+		return station
 	}
-
-	return stat.Station[0], nil
+	return stat.Station[0]
 }
 
-func getTimetable(station station, date time.Time) (ttable timetable, err error) {
+func (b *bahnAPI) getTimetable(station station, date time.Time) (ttable timetable) {
+	if b.err != nil {
+		return ttable
+	}
+
 	callURL := strconv.Itoa(station.ID) + "/" + date.Format(dateFormat) + "/" + date.Format(hourFormat)
 	resp, err := resty.R().Get(baseURL + "/plan/" + callURL)
 	if err != nil {
-		return ttable, err
+		b.err = err
+		return ttable
 	}
 	err = xml.Unmarshal(resp.Body(), &ttable)
 	if err != nil {
-		fmt.Printf("URL %s\n", baseURL+"/plan/"+callURL)
-		fmt.Printf("%s\n", resp)
-		return ttable, err
+		b.err = err
+		return ttable
 	}
-	return ttable, nil
+	return ttable
 }
 
-func fromTo(from station, to station, date time.Time) ([]stop, error) {
+func (b *bahnAPI) fromTo(from station, to station, date time.Time) []stop {
+	if b.err != nil {
+		return nil
+	}
+
 	curDate := date.Add(-1 * time.Hour)
 	fromStop := stop{station: from, arrivalTime: date}
 	var id string
 
+	counter := 0
 	for fromStop.departureTime.IsZero() {
-		curDate = curDate.Add(1 * time.Hour)
-		filteredFromTrips, err := getAndFilterTrips(from, to.Name, true, curDate)
-		if err != nil {
-			return nil, err
+		if counter > 3 {
+			b.err = errors.New("Could not find route from " + from.Name + " to " + to.Name)
+			return nil
 		}
+		curDate = curDate.Add(1 * time.Hour)
+		filteredFromTrips := b.getAndFilterTrips(from, to.Name, true, curDate)
 		for _, trip := range filteredFromTrips {
 			depTime, err := time.ParseInLocation(depFormat, trip.Departure.Time, time.Local)
 			if err != nil {
-				return nil, err
+				b.err = err
+				return nil
 			}
 			if depTime.Before(date) {
 				continue
@@ -149,31 +172,30 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 				break
 			}
 		}
+		counter++
 	}
 	toStop := stop{station: to}
-	counter := 0
+	counter = 0
 	for toStop.arrivalTime.IsZero() {
 		if counter > 3 {
 			break
 		}
-		filteredToTrips, err := getAndFilterTrips(to, from.Name, false, curDate)
-		if err != nil {
-			return nil, err
-		}
+		filteredToTrips := b.getAndFilterTrips(to, from.Name, false, curDate)
 		curDate = curDate.Add(1 * time.Hour)
 		counter++
 		for _, trip := range filteredToTrips {
 			if idReg.FindAllString(trip.ID, 1)[0] == id {
 				arrTime, err := time.ParseInLocation(depFormat, trip.Arrival.Time, time.Local)
 				if err != nil {
-					return nil, err
+					b.err = err
+					return nil
 				}
 				toStop.arrivalTime = arrTime
 				break
 			}
 		}
 	}
-	return []stop{fromStop, toStop}, nil
+	return []stop{fromStop, toStop}
 }
 
 type byArrTime []trip
@@ -188,14 +210,13 @@ func (a byDepTime) Len() int           { return len(a) }
 func (a byDepTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a byDepTime) Less(i, j int) bool { return a[i].Departure.Time < a[j].Departure.Time }
 
-func getAndFilterTrips(table station, filterBy string, departure bool, date time.Time) ([]trip, error) {
-	var filteredTrips []trip
-	trips, err := getTimetable(table, date)
-	if err != nil {
-		fmt.Printf("Could not get timetable for %s \n", table.Name)
-		fmt.Printf("%s\n", err)
-		return nil, err
+func (b *bahnAPI) getAndFilterTrips(table station, filterBy string, departure bool, date time.Time) []trip {
+	if b.err != nil {
+		return nil
 	}
+
+	var filteredTrips []trip
+	trips := b.getTimetable(table, date)
 	for _, trip := range trips.Trips {
 		if departure {
 			if strings.Contains(trip.Departure.Path, filterBy) {
@@ -209,12 +230,16 @@ func getAndFilterTrips(table station, filterBy string, departure bool, date time
 	}
 	sort.Sort(byArrTime(filteredTrips))
 
-	return filteredTrips, nil
+	return filteredTrips
 }
 
-func setUpAuthToken() {
+func (b *bahnAPI) setUpAuthToken() {
+	if b.err != nil {
+		return
+	}
 	tokenBytes, err := ioutil.ReadFile("auth_token")
 	if err != nil {
+		b.err = err
 		fmt.Printf("could not read token file\n")
 		fmt.Printf("error: %s\n", err)
 		return
@@ -222,41 +247,41 @@ func setUpAuthToken() {
 	resty.SetAuthToken(string(tokenBytes))
 }
 
-func searchRoute(path string) ([]stop, error) {
+func (b *bahnAPI) searchRoute(path string) []stop {
+	if b.err != nil {
+		return nil
+	}
 	var result []stop
 	route, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, err
+		b.err = err
+		return nil
 	}
 	routeParts := strings.Split(string(route), "\n")
 	curDate := time.Now()
 	var from station
 	var to station
+	durAdded := false
 	for i, part := range routeParts {
 		if dur, err := time.ParseDuration(part); err != nil {
-			if i == 0 {
-				to, err = getStation(part)
-				if err != nil {
-					return nil, err
-				}
+			if i == 0 || durAdded {
+				to = b.getStation(part)
+				durAdded = false
 			} else {
 				from = to
-				to, err = getStation(part)
-				if err != nil {
-					return nil, err
-				}
-				stops, err := fromTo(from, to, curDate)
-				if err != nil {
-					return nil, err
+				to = b.getStation(part)
+				stops := b.fromTo(from, to, curDate)
+				if b.err != nil {
+					return nil
 				}
 				curDate = stops[1].arrivalTime
 				result = append(result, stops...)
 			}
 		} else {
 			curDate = curDate.Add(dur)
+			durAdded = true
 		}
 
 	}
-
-	return result, nil
+	return result
 }
