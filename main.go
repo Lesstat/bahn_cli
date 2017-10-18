@@ -3,10 +3,13 @@ package main
 import (
 	"encoding/xml"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"os/user"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -29,66 +32,33 @@ type bahnAPI struct {
 	err error
 }
 
-type stations struct {
-	XMLName xml.Name  `xml:"stations"`
-	Station []station `xml:"station"`
-}
-type station struct {
-	Name string `xml:"name,attr"`
-	ID   int    `xml:"eva,attr"`
-}
-type timetable struct {
-	XMLName xml.Name `xml:"timetable"`
-	Trips   []trip   `xml:"s"`
-}
-type trip struct {
-	ID        string   `xml:"id,attr"`
-	TL        tl       `xml:"tl"`
-	Departure halfTrip `xml:"dp"`
-	Arrival   halfTrip `xml:"ar"`
-}
-type tl struct {
-	F string `xml:"f,attr"`
-	T string `xml:"t,attr"`
-	O string `xml:"o,attr"`
-	C string `xml:"c,attr"`
-	N string `xml:"n,attr"`
-}
-type halfTrip struct {
-	Time string `xml:"pt,attr"`
-	Path string `xml:"ppth,attr"`
-	Line string `xml:"l,attr"`
-}
-
-type stop struct {
-	station       station
-	arrivalTime   time.Time
-	departureTime time.Time
-	line          string
-}
-
 func main() {
+	flag.Parse()
+	args := flag.Args()
+
 	var b bahnAPI
 	b.setUpAuthToken()
-	w := tabwriter.NewWriter(os.Stdout, 5, 3, 3, ' ', 0)
-	// // ellhofen, _ :=  getStation("TELI")
-	// uni := b.getStation("Stuttgart Universi")
-	// stutTief := b.getStation("TS  T")
-	// stutHbf := b.getStation("Stuttgart Hbf")
-	// hnHbf := b.getStation("Heilbronn Hbf")
+	if len(args) == 0 {
+		fmt.Printf("No route given\n")
+		fmt.Printf("USAGE: bahn [route] [starttime]\n")
+		fmt.Printf("Example:\n")
+		fmt.Printf("bahn hw 0730\n")
+		fmt.Printf("Means look for the next trip of route hw after 07:30\n")
+		return
+	}
+	route := args[0]
 
-	// stops := b.fromTo(uni, stutTief, time.Now())
-	// newArr := stops[1].arrivalTime.Add(7 * time.Minute)
-
-	// stops2 := b.fromTo(stutHbf, hnHbf, newArr)
-
-	// stops = append(stops, stops2...)
-	stops := b.searchRoute("uh.route")
+	me, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+	stops := b.searchRoute(path.Join(me.HomeDir, ".config/bahn/routes", route))
 
 	if b.err != nil {
 		log.Fatal(b.err)
 	}
 
+	w := tabwriter.NewWriter(os.Stdout, 5, 3, 3, ' ', 0)
 	fmt.Fprintln(w, "# Station \t arrival \t departure \t line")
 	for index, stop := range stops {
 		if stop.departureTime.IsZero() {
