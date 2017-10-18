@@ -67,17 +67,17 @@ func main() {
 	w := tabwriter.NewWriter(os.Stdout, 5, 3, 3, ' ', 0)
 	// ellhofen, _ :=  getStation("TELI")
 	uni, _ := getStation("Stuttgart Universi")
-	stut_tief, _ := getStation("TS  T")
-	stut_hbf, _ := getStation("Stuttgart Hbf")
-	hn_hbf, _ := getStation("Heilbronn Hbf")
+	stutTief, _ := getStation("TS  T")
+	stutHbf, _ := getStation("Stuttgart Hbf")
+	hnHbf, _ := getStation("Heilbronn Hbf")
 
-	stops, err := fromTo(uni, stut_tief, time.Now())
+	stops, err := fromTo(uni, stutTief, time.Now())
 	if err != nil {
 		return
 	}
-	new_arr := stops[1].arrivalTime.Add(7 * time.Minute)
+	newArr := stops[1].arrivalTime.Add(7 * time.Minute)
 
-	stops2, err := fromTo(stut_hbf, hn_hbf, new_arr)
+	stops2, err := fromTo(stutHbf, hnHbf, newArr)
 	if err != nil {
 		return
 	}
@@ -161,7 +161,7 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 			return nil, err
 		}
 		curDate = curDate.Add(1 * time.Hour)
-		counter += 1
+		counter++
 		for _, trip := range filteredToTrips {
 			if idReg.FindAllString(trip.ID, 1)[0] == id {
 				arrTime, err := time.ParseInLocation(depFormat, trip.Arrival.Time, time.Local)
@@ -176,17 +176,17 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 	return []stop{fromStop, toStop}, nil
 }
 
-type ByArrTime []trip
+type byArrTime []trip
 
-func (a ByArrTime) Len() int           { return len(a) }
-func (a ByArrTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByArrTime) Less(i, j int) bool { return a[i].Arrival.Time < a[j].Arrival.Time }
+func (a byArrTime) Len() int           { return len(a) }
+func (a byArrTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a byArrTime) Less(i, j int) bool { return a[i].Arrival.Time < a[j].Arrival.Time }
 
-type ByDepTime []trip
+type byDepTime []trip
 
-func (a ByDepTime) Len() int           { return len(a) }
-func (a ByDepTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByDepTime) Less(i, j int) bool { return a[i].Departure.Time < a[j].Departure.Time }
+func (a byDepTime) Len() int           { return len(a) }
+func (a byDepTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a byDepTime) Less(i, j int) bool { return a[i].Departure.Time < a[j].Departure.Time }
 
 func getAndFilterTrips(table station, filterBy string, departure bool, date time.Time) ([]trip, error) {
 	var filteredTrips []trip
@@ -207,7 +207,7 @@ func getAndFilterTrips(table station, filterBy string, departure bool, date time
 			}
 		}
 	}
-	sort.Sort(ByArrTime(filteredTrips))
+	sort.Sort(byArrTime(filteredTrips))
 
 	return filteredTrips, nil
 }
@@ -228,11 +228,11 @@ func searchRoute(path string) ([]stop, error) {
 	if err != nil {
 		return nil, err
 	}
-	route_parts := strings.Split(string(route), "\n")
+	routeParts := strings.Split(string(route), "\n")
 	curDate := time.Now()
 	var from station
 	var to station
-	for i, part := range route_parts {
+	for i, part := range routeParts {
 		if dur, err := time.ParseDuration(part); err != nil {
 			if i == 0 {
 				to, err = getStation(part)
