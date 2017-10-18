@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -101,6 +102,10 @@ func getStation(stationName string) (station station, err error) {
 	if err != nil {
 		return station, err
 	}
+	if stat.Station[0].ID == 0 {
+		return station, errors.New("Did not find station for " + stationName)
+	}
+
 	return stat.Station[0], nil
 }
 
@@ -141,6 +146,7 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 				id = idReg.FindAllString(trip.ID, 1)[0]
 				fromStop.departureTime = depTime
 				fromStop.line = trip.TL.C + trip.Departure.Line
+				break
 			}
 		}
 	}
@@ -163,6 +169,7 @@ func fromTo(from station, to station, date time.Time) ([]stop, error) {
 					return nil, err
 				}
 				toStop.arrivalTime = arrTime
+				break
 			}
 		}
 	}
@@ -213,4 +220,43 @@ func setUpAuthToken() {
 		return
 	}
 	resty.SetAuthToken(string(tokenBytes))
+}
+
+func searchRoute(path string) ([]stop, error) {
+	var result []stop
+	route, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	route_parts := strings.Split(string(route), "\n")
+	curDate := time.Now()
+	var from station
+	var to station
+	for i, part := range route_parts {
+		if dur, err := time.ParseDuration(part); err != nil {
+			if i == 0 {
+				to, err = getStation(part)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				from = to
+				to, err = getStation(part)
+				if err != nil {
+					return nil, err
+				}
+				stops, err := fromTo(from, to, curDate)
+				if err != nil {
+					return nil, err
+				}
+				curDate = stops[1].arrivalTime
+				result = append(result, stops...)
+			}
+		} else {
+			curDate = curDate.Add(dur)
+		}
+
+	}
+
+	return result, nil
 }
