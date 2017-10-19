@@ -17,6 +17,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/lesstat/bahn_cli/cache"
+
 	resty "gopkg.in/resty.v1"
 )
 
@@ -30,6 +32,7 @@ var idReg = regexp.MustCompile(`-?\d+-\d`)
 
 type bahnAPI struct {
 	err error
+	c   cache.Cache
 }
 
 func main() {
@@ -37,6 +40,7 @@ func main() {
 	args := flag.Args()
 
 	var b bahnAPI
+	go b.c.ClearCache()
 	b.setUpAuthToken()
 	if len(args) == 0 {
 		fmt.Printf("No route given\n")
@@ -70,16 +74,24 @@ func main() {
 }
 func (b *bahnAPI) getStation(stationName string) station {
 	var station station
+	var stat stations
+	var content []byte
+	var err error
+
 	if b.err != nil {
 		return station
 	}
-	var stat stations
-	resp, err := resty.R().Get(baseURL + "/station/" + stationName)
-	if err != nil {
-		b.err = err
-		return station
+	url := "/station/" + stationName
+	if content, err = b.c.ReadCache(url); err != nil {
+		resp, err := resty.R().Get(baseURL + url)
+		if err != nil {
+			b.err = err
+			return station
+		}
+		content = resp.Body()
+		b.c.WriteCache(url, content)
 	}
-	err = xml.Unmarshal(resp.Body(), &stat)
+	err = xml.Unmarshal(content, &stat)
 	if err != nil {
 		b.err = err
 		return station
@@ -95,14 +107,21 @@ func (b *bahnAPI) getTimetable(station station, date time.Time) (ttable timetabl
 	if b.err != nil {
 		return ttable
 	}
+	var content []byte
+	var err error
 
-	callURL := strconv.Itoa(station.ID) + "/" + date.Format(dateFormat) + "/" + date.Format(hourFormat)
-	resp, err := resty.R().Get(baseURL + "/plan/" + callURL)
-	if err != nil {
-		b.err = err
-		return ttable
+	callURL := "/plan/" + strconv.Itoa(station.ID) + "/" + date.Format(dateFormat) + "/" + date.Format(hourFormat)
+
+	if content, err = b.c.ReadCache(callURL); err != nil {
+		resp, err := resty.R().Get(baseURL + callURL)
+		if err != nil {
+			b.err = err
+			return ttable
+		}
+		content = resp.Body()
+		b.c.WriteCache(callURL, content)
 	}
-	err = xml.Unmarshal(resp.Body(), &ttable)
+	err = xml.Unmarshal(content, &ttable)
 	if err != nil {
 		b.err = err
 		return ttable
@@ -207,7 +226,14 @@ func (b *bahnAPI) setUpAuthToken() {
 	if b.err != nil {
 		return
 	}
-	tokenBytes, err := ioutil.ReadFile("auth_token")
+
+	me, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+	config := path.Join(me.HomeDir, ".config/bahn/config")
+
+	tokenBytes, err := ioutil.ReadFile(config)
 	if err != nil {
 		b.err = err
 		fmt.Printf("could not read token file\n")
