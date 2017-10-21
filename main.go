@@ -27,6 +27,7 @@ const dateFormat = "060102"
 const hourFormat = "15"
 const depFormat = "0601021504"
 const outpFormat = "15:04"
+const timeFormat = "1504"
 
 var idReg = regexp.MustCompile(`-?\d+-\d`)
 
@@ -39,6 +40,8 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 
+	var curTime time.Time
+	var err error
 	var b bahnAPI
 	go b.c.ClearCache()
 	b.setUpAuthToken()
@@ -51,12 +54,22 @@ func main() {
 		return
 	}
 	route := args[0]
+	if len(args) > 1 {
+		timeArg := args[1]
+		curTime, err = buildTime(timeArg)
+		if err != nil {
+			fmt.Printf("could not parse %s as time\n", curTime)
+		}
+
+	} else {
+		curTime = time.Now()
+	}
 
 	me, err := user.Current()
 	if err != nil {
 		log.Fatal(err)
 	}
-	stops := b.searchRoute(path.Join(me.HomeDir, ".config/bahn/routes", route))
+	stops := b.searchRoute(path.Join(me.HomeDir, ".config/bahn/routes", route), curTime)
 
 	if b.err != nil {
 		log.Fatal(b.err)
@@ -243,7 +256,7 @@ func (b *bahnAPI) setUpAuthToken() {
 	resty.SetAuthToken(string(tokenBytes))
 }
 
-func (b *bahnAPI) searchRoute(path string) []stop {
+func (b *bahnAPI) searchRoute(path string, t time.Time) []stop {
 	if b.err != nil {
 		return nil
 	}
@@ -254,7 +267,8 @@ func (b *bahnAPI) searchRoute(path string) []stop {
 		return nil
 	}
 	routeParts := strings.Split(string(route), "\n")
-	curDate := time.Now()
+	curDate := t
+
 	var from station
 	var to station
 	durAdded := false
@@ -280,4 +294,13 @@ func (b *bahnAPI) searchRoute(path string) []stop {
 
 	}
 	return result
+}
+
+func buildTime(tString string) (time.Time, error) {
+	now := time.Now()
+	tTime, err := time.ParseInLocation(timeFormat, tString, time.Local)
+	if err != nil {
+		return now, err
+	}
+	return time.Date(now.Year(), now.Month(), now.Day(), tTime.Hour(), tTime.Minute(), 0, 0, time.Local), nil
 }
