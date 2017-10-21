@@ -51,7 +51,7 @@ func (c *Cache) buildPath(url string) (string, error) {
 }
 
 func (c *Cache) ClearCache() {
-	cachDir, err := c.buildPath("")
+	cachDir, err := c.buildPath("plan")
 	if err != nil {
 		fmt.Printf("Cleaning cache failed\n")
 		fmt.Printf("%s\n", err)
@@ -62,12 +62,14 @@ func (c *Cache) ClearCache() {
 		if path.Base(curPath) == "cache" {
 			return nil
 		}
+
 		if info.ModTime().Before(yesterday) {
-			err := os.Remove(curPath)
+			err := os.RemoveAll(curPath)
 			if err != nil {
 				fmt.Printf("Could not remove %s\n", curPath)
 				fmt.Printf("%s\n", err)
 			}
+
 		}
 		return nil
 	})
