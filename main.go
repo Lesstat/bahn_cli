@@ -230,7 +230,11 @@ func (b *bahnAPI) getAndFilterTrips(table station, filterBy string, departure bo
 			}
 		}
 	}
-	sort.Sort(byArrTime(filteredTrips))
+	if departure {
+		sort.Sort(byDepTime(filteredTrips))
+	} else {
+		sort.Sort(byArrTime(filteredTrips))
+	}
 
 	return filteredTrips
 }
