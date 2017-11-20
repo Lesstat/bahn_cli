@@ -59,6 +59,9 @@ func (c *Cache) ClearCache() {
 	yesterday := time.Now().Add(-24 * time.Hour)
 
 	filepath.Walk(cachDir, func(curPath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 		if path.Base(curPath) == "cache" {
 			return nil
 		}
